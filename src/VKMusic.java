@@ -21,17 +21,20 @@ public class VKMusic {
 
 	boolean firstRun = true;
 	
+	
 	final String appID = "5557569";
 	final String redirectURI = "https://oauth.vk.com/blank.html";
 	final String authScope = "audio";
 	final String responseType = "token";
 	final String apiVersion = "5.53";
 	
+	String userID = null;
 	String accessToken = null;
 	
 	public static void main(String[] args) {
 		// TODO Auto-generated method stub
 		authVK();
+		parseAndDownload();
 	}
 	
 	private void authVK() {
@@ -79,6 +82,7 @@ public class VKMusic {
 				if(event.location.contains("/blank.html")) {
 					accessToken = getAccessToken(event.location);
 					System.out.println(accessToken);
+					userID = getUserID(event.location);
 				}
 			}
 		});
@@ -91,6 +95,11 @@ public class VKMusic {
 		}
 	}
 	
+	private String getUserID(String fromUri) {
+		return fromUri
+				.substring(fromUri.indexOf("user_id"))
+				.split("=", 1)[1];
+	}
 	private String getAccessToken(String fromUri) {
 		return fromUri
 				.substring(fromUri.indexOf("access_token"))
@@ -98,6 +107,29 @@ public class VKMusic {
 		//String[] str = fromUri.split("#");
 		//String[] parameters = str[1].split("&");
 		//return parameters[0].split("=")[1];
+	}
+
+	private void parseAndDownload() {
+		URI getMusicUri = null;
+		try {
+			getMusicUri = new URIBuilder()
+						.setScheme("http")
+						.setHost("api.vk.com")
+						.setPath("/method/audio.get")
+						.setParameter("oid", userID)
+						.setParameter("need_user", "0")
+						.setParameter("count", "6000")
+						.setParameter("offset", "0")
+						.setParameter("access_token", accessToken)
+						.build();
+		} catch (URISyntaxException e) {
+			// TODO Auto-generated catch block
+			e.printStackTrace();
+		}
+	}
+	
+	private String fixWindowsFileName(String pathname) {
+		return "";
 	}
 	
 	class Song {
