@@ -3,6 +3,9 @@ import java.net.URI;
 import java.net.URISyntaxException;
 import java.util.List;
 
+import javafx.application.*;
+import javafx.stage.Stage;
+
 import org.eclipse.swt.SWT;
 import org.eclipse.swt.browser.*;
 import org.eclipse.swt.layout.FillLayout;
@@ -17,10 +20,11 @@ import org.apache.http.client.utils.URLEncodedUtils;
 import org.apache.http.impl.client.CloseableHttpClient;
 import org.apache.http.impl.client.HttpClients;
 
-public class VKMusic {
+public class VKMusic extends Application{
 
 	boolean firstRun = true;
 	
+	Stage mainStage = null;
 	
 	final String appID = "5557569";
 	final String redirectURI = "https://oauth.vk.com/blank.html";
@@ -37,6 +41,10 @@ public class VKMusic {
 		parseAndDownload();
 	}
 	
+	public void start(Stage stage) {
+		mainStage = stage;
+	}
+
 	private void authVK() {
 		URI authURI = null;
 		try {
@@ -53,11 +61,11 @@ public class VKMusic {
 		} catch (URISyntaxException e) {
 			System.out.println("Wrong URI");
 		}
-		
+
 		if(firstRun) {
 			openInBrowser(authURI);
 		}
-		
+
 		CloseableHttpClient httpClient = HttpClients.createDefault();
 		HttpGet httpGet = new HttpGet(authURI);
 		CloseableHttpResponse response = null;
@@ -68,7 +76,7 @@ public class VKMusic {
 			e.printStackTrace();
 		}
 	}
-	
+
 	private void openInBrowser(URI uri) {
 		Display display = new Display();
 		Shell shell = new Shell(display);
@@ -86,7 +94,7 @@ public class VKMusic {
 				}
 			}
 		});
-		
+
 		shell.open();
 		shell.setFocus();
 		while (!shell.isDisposed()) {
@@ -130,6 +138,10 @@ public class VKMusic {
 	
 	private String fixWindowsFileName(String pathname) {
 		return "";
+	}
+	
+	private void setUpGUI() {
+		 
 	}
 	
 	class Song {
