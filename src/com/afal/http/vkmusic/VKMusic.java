@@ -1,27 +1,42 @@
+package com.afal.http.vkmusic;
 import java.io.IOException;
 import java.net.URI;
 import java.net.URISyntaxException;
-import java.util.List;
+import java.util.prefs.Preferences;
 
-import javafx.application.*;
+import javafx.application.Application;
 import javafx.stage.Stage;
 
+import org.apache.http.HttpEntity;
+import org.apache.http.ParseException;
+import org.apache.http.client.CookieStore;
+import org.apache.http.client.HttpClient;
+import org.apache.http.client.methods.CloseableHttpResponse;
+import org.apache.http.client.methods.HttpGet;
+import org.apache.http.client.protocol.ClientContext;
+import org.apache.http.client.protocol.HttpClientContext;
+import org.apache.http.client.utils.URIBuilder;
+import org.apache.http.impl.client.BasicCookieStore;
+import org.apache.http.impl.client.CloseableHttpClient;
+import org.apache.http.impl.client.HttpClientBuilder;
+import org.apache.http.impl.client.HttpClients;
+import org.apache.http.impl.client.LaxRedirectStrategy;
+import org.apache.http.impl.cookie.BasicClientCookie;
+import org.apache.http.protocol.BasicHttpContext;
+import org.apache.http.protocol.HttpContext;
+import org.apache.http.util.EntityUtils;
 import org.eclipse.swt.SWT;
-import org.eclipse.swt.browser.*;
+import org.eclipse.swt.browser.Browser;
+import org.eclipse.swt.browser.LocationEvent;
+import org.eclipse.swt.browser.LocationListener;
 import org.eclipse.swt.layout.FillLayout;
 import org.eclipse.swt.widgets.Display;
 import org.eclipse.swt.widgets.Shell;
-import org.apache.http.NameValuePair;
-import org.apache.http.client.ResponseHandler;
-import org.apache.http.client.methods.CloseableHttpResponse;
-import org.apache.http.client.methods.HttpGet;
-import org.apache.http.client.utils.URIBuilder;
-import org.apache.http.client.utils.URLEncodedUtils;
-import org.apache.http.impl.client.CloseableHttpClient;
-import org.apache.http.impl.client.HttpClients;
 
 public class VKMusic extends Application{
 
+	final static Preferences userPrefs = Preferences.userNodeForPackage(VKMusic.class);
+	
 	boolean firstRun = true;
 	
 	Stage mainStage = null;
@@ -37,12 +52,19 @@ public class VKMusic extends Application{
 	
 	public static void main(String[] args) {
 		// TODO Auto-generated method stub
-		authVK();
-		parseAndDownload();
+		launch(args);
 	}
 	
 	public void start(Stage stage) {
 		mainStage = stage;
+		
+		firstRun = userPrefs.getBoolean("firstRun", true);
+		if(firstRun) {
+			setUpGUI();
+		}
+		
+		authVK();
+		parseAndDownload();
 	}
 
 	private void authVK() {
@@ -67,14 +89,34 @@ public class VKMusic extends Application{
 		}
 
 		CloseableHttpClient httpClient = HttpClients.createDefault();
+		//CloseableHttpClient httpClient = HttpClientBuilder.create()
+		//			.setRedirectStrategy(new LaxRedirectStrategy()).build();
 		HttpGet httpGet = new HttpGet(authURI);
+		//CookieStore cookieStore = new BasicCookieStore();
+		//HttpContext localContext = new BasicHttpContext();
+		//localContext.setAttribute(HttpClientContext.COOKIE_STORE, cookieStore);
+		//BasicClientCookie tmp = new BasicClientCookie(, accessToken);
 		CloseableHttpResponse response = null;
 		try {
-			response = httpClient.execute(httpGet);
+			response = httpClient.execute(httpGet); //, localContext);
 		} catch (IOException e) {
 			// TODO Auto-generated catch block
 			e.printStackTrace();
 		}
+		System.out.println(response.toString());
+	/*
+		HttpEntity respEntity = response.getEntity();
+		if(respEntity != null) {
+			try {
+				System.out.println(EntityUtils.toString(respEntity, "UTF-8"));
+			} catch (ParseException | IOException e) {
+				// TODO Auto-generated catch block
+				e.printStackTrace();
+			}
+		}
+		else
+			System.out.println("NULL");
+	*/
 	}
 
 	private void openInBrowser(URI uri) {
@@ -97,21 +139,22 @@ public class VKMusic extends Application{
 
 		shell.open();
 		shell.setFocus();
-		while (!shell.isDisposed()) {
-			if (!display.readAndDispatch())
-				display.sleep();
-		}
+	//	while (!shell.isDisposed()) {
+		//	if (!display.readAndDispatch())
+			//	display.sleep();
+		//}
 	}
 	
 	private String getUserID(String fromUri) {
 		return fromUri
 				.substring(fromUri.indexOf("user_id"))
-				.split("=", 1)[1];
+				.split("=")[1];
 	}
 	private String getAccessToken(String fromUri) {
 		return fromUri
 				.substring(fromUri.indexOf("access_token"))
-				.split("=", 1)[1];
+				.split("&")[0]
+				.split("=")[1];
 		//String[] str = fromUri.split("#");
 		//String[] parameters = str[1].split("&");
 		//return parameters[0].split("=")[1];
