@@ -1,13 +1,28 @@
 package com.afal.http.vkmusic;
+import java.io.File;
 import java.io.IOException;
+import java.net.CookieHandler;
+import java.net.CookieManager;
 import java.net.URI;
 import java.net.URISyntaxException;
+import java.util.List;
 import java.util.prefs.Preferences;
 
 import javafx.application.Application;
+import javafx.event.ActionEvent;
+import javafx.event.EventHandler;
+import javafx.scene.Scene;
+import javafx.scene.control.Button;
+import javafx.scene.control.CheckBox;
+import javafx.scene.control.Label;
+import javafx.scene.control.TextField;
+import javafx.scene.layout.HBox;
+import javafx.scene.layout.VBox;
+import javafx.stage.DirectoryChooser;
 import javafx.stage.Stage;
 
 import org.apache.http.HttpEntity;
+import org.apache.http.NameValuePair;
 import org.apache.http.ParseException;
 import org.apache.http.client.CookieStore;
 import org.apache.http.client.HttpClient;
@@ -32,28 +47,52 @@ import org.eclipse.swt.browser.LocationListener;
 import org.eclipse.swt.layout.FillLayout;
 import org.eclipse.swt.widgets.Display;
 import org.eclipse.swt.widgets.Shell;
+import org.jsoup.Jsoup;
+import org.jsoup.nodes.Document;
+import org.jsoup.nodes.Element;
 
 public class VKMusic extends Application{
 
+	class Song {
+		private String name, artist;
+		
+		Song(String n, String a) {
+			name = n; 
+			artist = a;
+		}
+		
+		String getArtist() {
+			return artist;
+		}
+		
+		String getName() {
+			return name;
+		}
+	}
+	
 	final static Preferences userPrefs = Preferences.userNodeForPackage(VKMusic.class);
 	
-	boolean firstRun = true;
-	
-	Stage mainStage = null;
-	
-	final String appID = "5557569";
-	final String redirectURI = "https://oauth.vk.com/blank.html";
-	final String authScope = "audio";
-	final String responseType = "token";
-	final String apiVersion = "5.53";
+	public static void main(String[] args) {
+		launch(args);
+	}
 	
 	String userID = null;
 	String accessToken = null;
+	final String apiVersion = "5.53";
+	final String appID = "5557569";
+	final String authScope = "audio";
+	final String redirectURI = "https://oauth.vk.com/blank.html";
+	final String responseType = "token";
 	
-	public static void main(String[] args) {
-		// TODO Auto-generated method stub
-		launch(args);
-	}
+	boolean firstRun = true;
+	CloseableHttpClient httpClient = HttpClients.createDefault();
+	Stage mainStage = null;
+	
+	boolean makeDirForAuthor = false;
+	CheckBox dirForAuthorCB = null;
+	
+	String musicPath = null;
+	TextField musicPathField = null;
 	
 	public void start(Stage stage) {
 		mainStage = stage;
@@ -66,7 +105,7 @@ public class VKMusic extends Application{
 		authVK();
 		parseAndDownload();
 	}
-
+	
 	private void authVK() {
 		URI authURI = null;
 		try {
@@ -88,27 +127,38 @@ public class VKMusic extends Application{
 			openInBrowser(authURI);
 		}
 
-		CloseableHttpClient httpClient = HttpClients.createDefault();
-		//CloseableHttpClient httpClient = HttpClientBuilder.create()
-		//			.setRedirectStrategy(new LaxRedirectStrategy()).build();
-		HttpGet httpGet = new HttpGet(authURI);
-		//CookieStore cookieStore = new BasicCookieStore();
-		//HttpContext localContext = new BasicHttpContext();
-		//localContext.setAttribute(HttpClientContext.COOKIE_STORE, cookieStore);
-		//BasicClientCookie tmp = new BasicClientCookie(, accessToken);
-		CloseableHttpResponse response = null;
+		CookieHandler.setDefault(new CookieManager());
+		String responce = getPageContent(authURI);
+	}
+
+	private String fixWindowsFileName(String pathname) {
+		return "";
+	}
+	
+	private String getAccessToken(String fromUri) {
+		return fromUri
+				.substring(fromUri.indexOf("access_token"))
+				.split("&")[0]
+				.split("=")[1];
+	}
+
+	private String getPageContent(URI uri) {
+		String response = null;
+
+		HttpGet httpGet = new HttpGet(uri);
+
+		CloseableHttpResponse httpResponse = null;
 		try {
-			response = httpClient.execute(httpGet); //, localContext);
+			httpResponse = httpClient.execute(httpGet);
 		} catch (IOException e) {
 			// TODO Auto-generated catch block
 			e.printStackTrace();
 		}
-		System.out.println(response.toString());
-	/*
-		HttpEntity respEntity = response.getEntity();
+
+		HttpEntity respEntity = httpResponse.getEntity();
 		if(respEntity != null) {
 			try {
-				System.out.println(EntityUtils.toString(respEntity, "UTF-8"));
+				response = EntityUtils.toString(respEntity, "UTF-8");
 			} catch (ParseException | IOException e) {
 				// TODO Auto-generated catch block
 				e.printStackTrace();
@@ -116,9 +166,19 @@ public class VKMusic extends Application{
 		}
 		else
 			System.out.println("NULL");
-	*/
+		
+		setCookies(httpResponse.getFirstHeader("Set-Cookie") == null ? "" : 
+            httpResponse.getFirstHeader("Set-Cookie").toString());
+
+		return response;
 	}
 
+	private String getUserID(String fromUri) {
+		return fromUri
+				.substring(fromUri.indexOf("user_id"))
+				.split("=")[1];
+	}
+	
 	private void openInBrowser(URI uri) {
 		Display display = new Display();
 		Shell shell = new Shell(display);
@@ -127,7 +187,6 @@ public class VKMusic extends Application{
 		Browser browser = new Browser(shell, SWT.NONE);
 		browser.setUrl(uri.toASCIIString());
 		browser.addLocationListener(new LocationListener() {
-			public void changing(LocationEvent event) {}
 			public void changed(LocationEvent event) {
 				if(event.location.contains("/blank.html")) {
 					accessToken = getAccessToken(event.location);
@@ -135,6 +194,7 @@ public class VKMusic extends Application{
 					userID = getUserID(event.location);
 				}
 			}
+			public void changing(LocationEvent event) {}
 		});
 
 		shell.open();
@@ -145,21 +205,6 @@ public class VKMusic extends Application{
 		//}
 	}
 	
-	private String getUserID(String fromUri) {
-		return fromUri
-				.substring(fromUri.indexOf("user_id"))
-				.split("=")[1];
-	}
-	private String getAccessToken(String fromUri) {
-		return fromUri
-				.substring(fromUri.indexOf("access_token"))
-				.split("&")[0]
-				.split("=")[1];
-		//String[] str = fromUri.split("#");
-		//String[] parameters = str[1].split("&");
-		//return parameters[0].split("=")[1];
-	}
-
 	private void parseAndDownload() {
 		URI getMusicUri = null;
 		try {
@@ -179,28 +224,50 @@ public class VKMusic extends Application{
 		}
 	}
 	
-	private String fixWindowsFileName(String pathname) {
-		return "";
-	}
-	
 	private void setUpGUI() {
+		 VBox mainLayout = new VBox();
+		 HBox musicPathLayout = new HBox();
+		 musicPathField = new TextField();
+		 Button browse = new Button("Browse");
+	
+		 browse.setOnAction(new EventHandler<ActionEvent>() {
+			 public void handle(ActionEvent e) {
+				 final DirectoryChooser dirChooser = new DirectoryChooser();
+				 final File choice = dirChooser.showDialog(mainStage);
+				 if(choice != null) {
+					 musicPathField.appendText(choice.getAbsolutePath());
+				 }
+			 }
+		 });
+		 musicPathLayout.getChildren().addAll(new Label("Set path to musci folder"), musicPathField, browse);
+
+		 HBox dirForAuthorLayout = new HBox();
+		 dirForAuthorCB = new CheckBox();
+		 dirForAuthorLayout.getChildren().addAll(dirForAuthorCB, new Label("Create directory for each author"));
+	
+		 HBox buttonLayout = new HBox();
+		 Button okButton = new Button("Ok");
+		 okButton.setOnAction(new EventHandler<ActionEvent>() {
+			public void handle(ActionEvent e) {
+				musicPath = musicPathField.getText();
+				userPrefs.put("musicPath", musicPath);
+				makeDirForAuthor = dirForAuthorCB.isArmed();
+				userPrefs.putBoolean("makeDirForAuthor", makeDirForAuthor);
+				mainStage.hide();
+			}
+		 });
+		 Button cancelButton = new Button("Cancel");
+		 cancelButton.setOnAction(new EventHandler<ActionEvent>() {
+			public void handle(ActionEvent e) {
+				mainStage.close();
+			}
+		 });
+		 buttonLayout.getChildren().addAll(okButton, cancelButton);
 		 
+		 mainLayout.getChildren().addAll(musicPathLayout, dirForAuthorLayout, buttonLayout);
+		 
+		 mainStage.setScene(new Scene(mainLayout));	
+		 mainStage.show();
 	}
 	
-	class Song {
-		private String name, artist;
-		
-		Song(String n, String a) {
-			name = n; 
-			artist = a;
-		}
-		
-		String getName() {
-			return name;
-		}
-		
-		String getArtist() {
-			return artist;
-		}
-	}
 }
