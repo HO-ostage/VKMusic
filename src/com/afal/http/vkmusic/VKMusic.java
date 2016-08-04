@@ -1,6 +1,8 @@
 package com.afal.http.vkmusic;
+import java.io.BufferedReader;
 import java.io.File;
 import java.io.IOException;
+import java.io.InputStreamReader;
 import java.net.CookieHandler;
 import java.net.CookieManager;
 import java.net.URI;
@@ -24,13 +26,14 @@ import javafx.stage.Stage;
 import org.apache.http.HttpEntity;
 import org.apache.http.NameValuePair;
 import org.apache.http.ParseException;
+import org.apache.http.client.ClientProtocolException;
 import org.apache.http.client.CookieStore;
 import org.apache.http.client.HttpClient;
 import org.apache.http.client.methods.CloseableHttpResponse;
 import org.apache.http.client.methods.HttpGet;
-import org.apache.http.client.protocol.ClientContext;
-import org.apache.http.client.protocol.HttpClientContext;
+import org.apache.http.client.methods.HttpPost;
 import org.apache.http.client.utils.URIBuilder;
+import org.apache.http.cookie.Cookie;
 import org.apache.http.impl.client.BasicCookieStore;
 import org.apache.http.impl.client.CloseableHttpClient;
 import org.apache.http.impl.client.HttpClientBuilder;
@@ -51,10 +54,22 @@ import org.jsoup.Jsoup;
 import org.jsoup.nodes.Document;
 import org.jsoup.nodes.Element;
 
+import com.google.gson.Gson;
+import com.google.gson.JsonArray;
+import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
+import com.google.gson.JsonPrimitive;
+import com.google.gson.annotations.SerializedName;
+
 public class VKMusic extends Application{
 
 	class Song {
-		private String name, artist;
+		@SerializedName("title")
+		private String name;
+		@SerializedName("artist")
+		private String artist;
+		@SerializedName("url")
+		private String url;
 		
 		Song(String n, String a) {
 			name = n; 
@@ -83,10 +98,13 @@ public class VKMusic extends Application{
 	final String authScope = "audio";
 	final String redirectURI = "https://oauth.vk.com/blank.html";
 	final String responseType = "token";
+	final String userAgent = "Mozilla/5.0";
 	
 	boolean firstRun = true;
-	CloseableHttpClient httpClient = HttpClients.createDefault();
 	Stage mainStage = null;
+	
+	CloseableHttpClient httpClient = HttpClients.createDefault();
+	CookieStore cookieStore = new BasicCookieStore();
 	
 	boolean makeDirForAuthor = false;
 	CheckBox dirForAuthorCB = null;
@@ -103,7 +121,12 @@ public class VKMusic extends Application{
 		}
 		
 		authVK();
-		parseAndDownload();
+		try {
+			parseAndDownload();
+		} catch (IOException e) {
+			// TODO Auto-generated catch block
+			e.printStackTrace();
+		}
 	}
 	
 	private void authVK() {
@@ -128,7 +151,8 @@ public class VKMusic extends Application{
 		}
 
 		CookieHandler.setDefault(new CookieManager());
-		String responce = getPageContent(authURI);
+		String response = getPageContent(authURI);
+		sendPost(authURI);
 	}
 
 	private String fixWindowsFileName(String pathname) {
@@ -167,9 +191,6 @@ public class VKMusic extends Application{
 		else
 			System.out.println("NULL");
 		
-		setCookies(httpResponse.getFirstHeader("Set-Cookie") == null ? "" : 
-            httpResponse.getFirstHeader("Set-Cookie").toString());
-
 		return response;
 	}
 
@@ -192,6 +213,10 @@ public class VKMusic extends Application{
 					accessToken = getAccessToken(event.location);
 					System.out.println(accessToken);
 					userID = getUserID(event.location);
+					
+					BasicClientCookie cookie = new BasicClientCookie("JSESSIONID", 
+							Browser.getCookie("JSESSIONID", "oauth.vk.com"));
+					cookieStore.addCookie(cookie);
 				}
 			}
 			public void changing(LocationEvent event) {}
@@ -199,20 +224,20 @@ public class VKMusic extends Application{
 
 		shell.open();
 		shell.setFocus();
-	//	while (!shell.isDisposed()) {
-		//	if (!display.readAndDispatch())
-			//	display.sleep();
-		//}
+		while (!shell.isDisposed()) {
+			if (!display.readAndDispatch())
+				display.sleep();
+		}
 	}
 	
-	private void parseAndDownload() {
+	private void parseAndDownload() throws ClientProtocolException, IOException {
 		URI getMusicUri = null;
 		try {
 			getMusicUri = new URIBuilder()
-						.setScheme("http")
+						.setScheme("https")
 						.setHost("api.vk.com")
 						.setPath("/method/audio.get")
-						.setParameter("oid", userID)
+						.setParameter("owner_id", userID)
 						.setParameter("need_user", "0")
 						.setParameter("count", "6000")
 						.setParameter("offset", "0")
@@ -222,6 +247,20 @@ public class VKMusic extends Application{
 			// TODO Auto-generated catch block
 			e.printStackTrace();
 		}
+		CloseableHttpResponse response = httpClient.execute(new HttpGet(getMusicUri));
+		String strResponse = EntityUtils.toString(response.getEntity());
+		//System.out.println(strResponse);
+		
+		Gson gson = new Gson();
+		JsonParser jparser = new JsonParser();
+		JsonObject jobj = jparser.parse(strResponse).getAsJsonObject();
+		JsonArray jarr = jobj.get("response").getAsJsonArray(); //jparser.parse(strResponse).getAsJsonArray();
+		
+		System.out.println(jarr.toString());
+		
+		Integer count = gson.fromJson(jarr.get(0), Integer.class);
+		Song song = gson.fromJson(jarr.get(1), Song.class);
+		System.out.println(count + " " + song.getArtist() + " " + song.getName());
 	}
 	
 	private void setUpGUI() {
@@ -270,4 +309,45 @@ public class VKMusic extends Application{
 		 mainStage.show();
 	}
 	
+	private void sendPost(URI url) { //, List<NameValuePair> postParams) {
+		HttpPost post = new HttpPost(url);
+		
+		post.setHeader("Host", "oauth.vk.com");
+		post.setHeader("User-Agent", userAgent);
+		post.setHeader("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8");
+		post.setHeader("Accept-Language", "en-US,en;q=0.5");
+		post.setHeader("Cookie", cookieStore.getCookies().get(0).toString());//Browser.getCookie("JSESSIONID", "oauth.vk.com"));//url.toASCIIString()));
+		post.setHeader("Connection", "keep-alive");
+		post.setHeader("Referer", "https://oauth.vk.com/authorize");
+		post.setHeader("Content-Type", "application/x-www-form-urlencoded");
+		
+		CloseableHttpResponse response = null;
+		try {
+			response = httpClient.execute(post);
+		} catch (IOException e) {
+			// TODO Auto-generated catch block
+			e.printStackTrace();
+		}
+		
+		BufferedReader rd = null;
+		try {
+			rd = new BufferedReader(
+			        new InputStreamReader(response.getEntity().getContent()));
+		} catch (UnsupportedOperationException | IOException e) {
+			// TODO Auto-generated catch block
+			e.printStackTrace();
+		}
+
+		StringBuffer result = new StringBuffer();
+		String line = "";
+		try {
+			while ((line = rd.readLine()) != null) {
+			result.append(line);
+			}
+		} catch (IOException e) {
+			// TODO Auto-generated catch block
+			e.printStackTrace();
+		}
+		System.out.println(result.toString());
+	}
 }
