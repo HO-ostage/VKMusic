@@ -3,10 +3,16 @@ import java.io.BufferedReader;
 import java.io.File;
 import java.io.IOException;
 import java.io.InputStreamReader;
+import java.io.Serializable;
 import java.net.CookieHandler;
 import java.net.CookieManager;
 import java.net.URI;
 import java.net.URISyntaxException;
+import java.net.URL;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.prefs.Preferences;
 
@@ -23,6 +29,9 @@ import javafx.scene.layout.VBox;
 import javafx.stage.DirectoryChooser;
 import javafx.stage.Stage;
 
+import org.apache.commons.io.FileUtils;
+import org.apache.commons.lang3.StringEscapeUtils;
+import org.apache.commons.lang3.StringUtils;
 import org.apache.http.HttpEntity;
 import org.apache.http.NameValuePair;
 import org.apache.http.ParseException;
@@ -63,17 +72,27 @@ import com.google.gson.annotations.SerializedName;
 
 public class VKMusic extends Application{
 
-	class Song {
+	class Song implements Serializable{
+		/**
+		 * 
+		 */
+		private static final long serialVersionUID = 152600442802102041L;
+		
 		@SerializedName("title")
 		private String name;
 		@SerializedName("artist")
 		private String artist;
 		@SerializedName("url")
 		private String url;
+		private String path;
 		
 		Song(String n, String a) {
 			name = n; 
 			artist = a;
+		}
+		
+		String getPath() {
+			return path;
 		}
 		
 		String getArtist() {
@@ -82,6 +101,14 @@ public class VKMusic extends Application{
 		
 		String getName() {
 			return name;
+		}
+		
+		String getURL() {
+			return url;
+		}
+		
+		void setPath(String sPath) {
+			path = sPath;
 		}
 	}
 	
@@ -111,6 +138,8 @@ public class VKMusic extends Application{
 	
 	String musicPath = null;
 	TextField musicPathField = null;
+	
+	ArrayList<Song> songArr = null;
 	
 	public void start(Stage stage) {
 		mainStage = stage;
@@ -146,17 +175,22 @@ public class VKMusic extends Application{
 			System.out.println("Wrong URI");
 		}
 
-		if(firstRun) {
-			openInBrowser(authURI);
-		}
+		openInBrowser(authURI);
+		
 
-		CookieHandler.setDefault(new CookieManager());
-		String response = getPageContent(authURI);
-		sendPost(authURI);
+		//CookieHandler.setDefault(new CookieManager());
+		//String response = getPageContent(authURI);
+		//sendPost(authURI);
 	}
 
 	private String fixWindowsFileName(String pathname) {
-		return "";
+		String[] forbiddenSymbols = new String[] {"<", ">", ":", "\"", "/", "\\", "|", "?", "*"}; // для windows
+        String result = pathname;
+        for (String forbiddenSymbol: forbiddenSymbols) {
+            result = StringUtils.replace(result, forbiddenSymbol, "");
+        }
+        // амперсанд в названиях передаётся как '& amp', приводим его к читаемому виду
+        return StringEscapeUtils.unescapeXml(result); 
 	}
 	
 	private String getAccessToken(String fromUri) {
@@ -254,13 +288,36 @@ public class VKMusic extends Application{
 		Gson gson = new Gson();
 		JsonParser jparser = new JsonParser();
 		JsonObject jobj = jparser.parse(strResponse).getAsJsonObject();
-		JsonArray jarr = jobj.get("response").getAsJsonArray(); //jparser.parse(strResponse).getAsJsonArray();
-		
-		System.out.println(jarr.toString());
-		
+		JsonArray jarr = jobj.get("response").getAsJsonArray();
+				
 		Integer count = gson.fromJson(jarr.get(0), Integer.class);
-		Song song = gson.fromJson(jarr.get(1), Song.class);
-		System.out.println(count + " " + song.getArtist() + " " + song.getName());
+		
+		File musicDir = new File(musicPath);
+		if(!musicDir.exists())
+			musicDir.mkdirs();
+		
+		for(int i = 1; i < count + 1; i++) {
+			Song song = gson.fromJson(jarr.get(i), Song.class);
+			songArr.add(song);
+			downloadSong(song);
+		}
+		
+		
+	}
+	
+	private void downloadSong(Song song) throws IOException {
+		String path = musicPath;
+		if(makeDirForAuthor) {
+			path += "\\" + fixWindowsFileName(song.getArtist()) + "\\";
+			Files.createDirectory(Paths.get(path));
+		}
+		path += fixWindowsFileName(song.getName() + " - " + song.getArtist());
+		
+		File dest = new File(path + ".mp3");
+		if(!dest.exists()) {
+			FileUtils.copyURLToFile(new URL(song.getURL()), dest);
+			song.setPath(dest.getAbsolutePath());
+		}
 	}
 	
 	private void setUpGUI() {
