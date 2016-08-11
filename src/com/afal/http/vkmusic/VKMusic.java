@@ -4,6 +4,7 @@ import java.io.File;
 import java.io.IOException;
 import java.io.InputStreamReader;
 import java.io.Serializable;
+import java.io.StringReader;
 import java.net.CookieHandler;
 import java.net.CookieManager;
 import java.net.URI;
@@ -16,7 +17,13 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.prefs.Preferences;
 
+import javax.xml.bind.annotation.XmlRootElement;
+import javax.xml.parsers.ParserConfigurationException;
+import javax.xml.parsers.SAXParser;
+import javax.xml.parsers.SAXParserFactory;
+
 import javafx.application.Application;
+import javafx.application.Platform;
 import javafx.event.ActionEvent;
 import javafx.event.EventHandler;
 import javafx.scene.Scene;
@@ -28,6 +35,7 @@ import javafx.scene.layout.HBox;
 import javafx.scene.layout.VBox;
 import javafx.stage.DirectoryChooser;
 import javafx.stage.Stage;
+import javafx.stage.WindowEvent;
 
 import org.apache.commons.io.FileUtils;
 import org.apache.commons.lang3.StringEscapeUtils;
@@ -62,6 +70,10 @@ import org.eclipse.swt.widgets.Shell;
 import org.jsoup.Jsoup;
 import org.jsoup.nodes.Document;
 import org.jsoup.nodes.Element;
+import org.xml.sax.Attributes;
+import org.xml.sax.InputSource;
+import org.xml.sax.SAXException;
+import org.xml.sax.helpers.DefaultHandler;
 
 import com.google.gson.Gson;
 import com.google.gson.JsonArray;
@@ -79,7 +91,7 @@ public class VKMusic extends Application{
 		private static final long serialVersionUID = 152600442802102041L;
 		
 		@SerializedName("title")
-		private String name;
+		private String title;
 		@SerializedName("artist")
 		private String artist;
 		@SerializedName("url")
@@ -87,8 +99,15 @@ public class VKMusic extends Application{
 		private String path;
 		
 		Song(String n, String a) {
-			name = n; 
+			title = n; 
 			artist = a;
+		}
+		
+		Song() {
+			title = null;
+			artist = null;
+			url = null;
+			path = null;
 		}
 		
 		String getPath() {
@@ -99,16 +118,68 @@ public class VKMusic extends Application{
 			return artist;
 		}
 		
-		String getName() {
-			return name;
+		String getTitle() {
+			return title;
 		}
 		
 		String getURL() {
 			return url;
 		}
 		
+		void setArtist(String sArtist) {
+			artist = sArtist;
+		}
+		
+		void setTitle(String sTitle) {
+			title = sTitle;
+		}
+		
+		void setUrl(String sUrl) {
+			url = sUrl;
+		}
+		
 		void setPath(String sPath) {
 			path = sPath;
+		}
+	}
+	
+	class VKMusicHandler extends DefaultHandler {
+		boolean bArtist = false;
+		boolean bTitle = false;
+		boolean bUrl = false;
+		
+		Song song = null;
+		
+		public void startElement(String uri, String localName, 
+				String qName, Attributes attributes) {
+			if(qName.equalsIgnoreCase("audio")) {
+				song = new Song();
+			} else if(qName.equalsIgnoreCase("artist")) {
+				bArtist = true;
+			} else if (qName.equalsIgnoreCase("title")) {
+				bTitle = true;
+			} else if (qName.equalsIgnoreCase("url")) {
+				bUrl = true;
+			}
+		}
+		
+		public void characters(char ch[], int start, int length) {
+			if(bArtist) {
+				song.setArtist(new String(ch, start, length));
+				bArtist = false;
+			} else if(bTitle) {
+				song.setTitle(new String(ch, start, length));
+				bTitle = false;
+			} else if(bUrl) {
+				song.setUrl(new String(ch, start, length));
+				bUrl = false;
+			}
+		}
+		
+		public void endElement(String uri, String localName, String qName) {
+			if(qName.equalsIgnoreCase("audio")) {
+				songArr.add(song);
+			}
 		}
 	}
 	
@@ -133,8 +204,8 @@ public class VKMusic extends Application{
 	CloseableHttpClient httpClient = HttpClients.createDefault();
 	CookieStore cookieStore = new BasicCookieStore();
 	
-	boolean makeDirForAuthor = false;
-	CheckBox dirForAuthorCB = null;
+	boolean makeDirForArtist = false;
+	CheckBox dirForArtistCB = null;
 	
 	String musicPath = null;
 	TextField musicPathField = null;
@@ -151,8 +222,14 @@ public class VKMusic extends Application{
 		
 		authVK();
 		try {
-			parseAndDownload();
+			parseAndDownloadXML();
 		} catch (IOException e) {
+			// TODO Auto-generated catch block
+			e.printStackTrace();
+		} catch (ParserConfigurationException e) {
+			// TODO Auto-generated catch block
+			e.printStackTrace();
+		} catch (SAXException e) {
 			// TODO Auto-generated catch block
 			e.printStackTrace();
 		}
@@ -264,7 +341,46 @@ public class VKMusic extends Application{
 		}
 	}
 	
-	private void parseAndDownload() throws ClientProtocolException, IOException {
+	private void parseAndDownloadXML() throws ClientProtocolException, IOException, ParserConfigurationException, SAXException {
+		URI getMusicUri = null;
+		try {
+			getMusicUri = new URIBuilder()
+						.setScheme("https")
+						.setHost("api.vk.com")
+						.setPath("/method/audio.get.xml")
+						.setParameter("owner_id", userID)
+						.setParameter("need_user", "0")
+						.setParameter("count", "6000")
+						.setParameter("offset", "0")
+						.setParameter("access_token", accessToken)
+						.build();
+		} catch (URISyntaxException e) {
+			// TODO Auto-generated catch block
+			e.printStackTrace();
+		}
+		System.out.println(getMusicUri.toASCIIString());
+		CloseableHttpResponse response = httpClient.execute(new HttpGet(getMusicUri));
+		//EntityUtils.consume(response.getEntity());
+		String strResponse = EntityUtils.toString(response.getEntity());
+		System.out.println(strResponse);
+		
+		songArr = new ArrayList<Song>();
+		SAXParser saxParser = SAXParserFactory.newInstance().newSAXParser();
+		saxParser.parse(new InputSource(new StringReader(strResponse)), new VKMusicHandler());
+		
+		boolean result = false;
+		File musicDir = new File(musicPath + "\\VKMusic");	
+		System.out.println(musicDir.canWrite());
+		System.out.println(new File(musicPath).canWrite());
+		if(!musicDir.exists()) {
+			result = musicDir.mkdirs();
+			//Files.createDirectories(musicDir.toPath());
+		}
+		//for(Song song : songArr)
+			//downloadSong(song);
+	}
+	
+	private void parseAndDownloadJson() throws ClientProtocolException, IOException {
 		URI getMusicUri = null;
 		try {
 			getMusicUri = new URIBuilder()
@@ -281,7 +397,9 @@ public class VKMusic extends Application{
 			// TODO Auto-generated catch block
 			e.printStackTrace();
 		}
+		System.out.println(getMusicUri.toASCIIString());
 		CloseableHttpResponse response = httpClient.execute(new HttpGet(getMusicUri));
+		//EntityUtils.consume(response.getEntity());
 		String strResponse = EntityUtils.toString(response.getEntity());
 		//System.out.println(strResponse);
 		
@@ -289,29 +407,29 @@ public class VKMusic extends Application{
 		JsonParser jparser = new JsonParser();
 		JsonObject jobj = jparser.parse(strResponse).getAsJsonObject();
 		JsonArray jarr = jobj.get("response").getAsJsonArray();
-				
+		
+		
 		Integer count = gson.fromJson(jarr.get(0), Integer.class);
 		
 		File musicDir = new File(musicPath);
 		if(!musicDir.exists())
 			musicDir.mkdirs();
 		
-		for(int i = 1; i < count + 1; i++) {
+		songArr = new ArrayList<Song>();
+		for(int i = 1; i < count; i++) {
 			Song song = gson.fromJson(jarr.get(i), Song.class);
 			songArr.add(song);
-			downloadSong(song);
+			//downloadSong(song);
 		}
-		
-		
 	}
 	
 	private void downloadSong(Song song) throws IOException {
 		String path = musicPath;
-		if(makeDirForAuthor) {
+		if(makeDirForArtist) {
 			path += "\\" + fixWindowsFileName(song.getArtist()) + "\\";
 			Files.createDirectory(Paths.get(path));
 		}
-		path += fixWindowsFileName(song.getName() + " - " + song.getArtist());
+		path += fixWindowsFileName(song.getTitle() + " - " + song.getArtist());
 		
 		File dest = new File(path + ".mp3");
 		if(!dest.exists()) {
@@ -321,25 +439,38 @@ public class VKMusic extends Application{
 	}
 	
 	private void setUpGUI() {
+		 Stage tmpStage = new Stage();
+		 tmpStage.setTitle("VKMusic");
+		 tmpStage.setOnCloseRequest(new EventHandler<WindowEvent>() {
+
+			@Override
+			public void handle(WindowEvent arg0) {
+				Platform.exit();
+				System.exit(0);
+			}
+		 });
+		 
 		 VBox mainLayout = new VBox();
+		 
 		 HBox musicPathLayout = new HBox();
-		 musicPathField = new TextField();
+		 musicPathField = new TextField("C:\\Program Files");
 		 Button browse = new Button("Browse");
-	
+		
 		 browse.setOnAction(new EventHandler<ActionEvent>() {
 			 public void handle(ActionEvent e) {
 				 final DirectoryChooser dirChooser = new DirectoryChooser();
 				 final File choice = dirChooser.showDialog(mainStage);
 				 if(choice != null) {
+					 musicPathField.clear();
 					 musicPathField.appendText(choice.getAbsolutePath());
 				 }
 			 }
 		 });
 		 musicPathLayout.getChildren().addAll(new Label("Set path to musci folder"), musicPathField, browse);
 
-		 HBox dirForAuthorLayout = new HBox();
-		 dirForAuthorCB = new CheckBox();
-		 dirForAuthorLayout.getChildren().addAll(dirForAuthorCB, new Label("Create directory for each author"));
+		 HBox dirForArtistLayout = new HBox();
+		 dirForArtistCB = new CheckBox();
+		 dirForArtistLayout.getChildren().addAll(dirForArtistCB, new Label("Create directory for each author"));
 	
 		 HBox buttonLayout = new HBox();
 		 Button okButton = new Button("Ok");
@@ -347,23 +478,24 @@ public class VKMusic extends Application{
 			public void handle(ActionEvent e) {
 				musicPath = musicPathField.getText();
 				userPrefs.put("musicPath", musicPath);
-				makeDirForAuthor = dirForAuthorCB.isArmed();
-				userPrefs.putBoolean("makeDirForAuthor", makeDirForAuthor);
-				mainStage.hide();
+				makeDirForArtist = dirForArtistCB.isArmed();
+				userPrefs.putBoolean("makeDirForArtist", makeDirForArtist);
+				tmpStage.hide();
 			}
 		 });
 		 Button cancelButton = new Button("Cancel");
 		 cancelButton.setOnAction(new EventHandler<ActionEvent>() {
 			public void handle(ActionEvent e) {
-				mainStage.close();
+				Platform.exit();
+				System.exit(0);
 			}
 		 });
 		 buttonLayout.getChildren().addAll(okButton, cancelButton);
 		 
-		 mainLayout.getChildren().addAll(musicPathLayout, dirForAuthorLayout, buttonLayout);
+		 mainLayout.getChildren().addAll(musicPathLayout, dirForArtistLayout, buttonLayout);
 		 
-		 mainStage.setScene(new Scene(mainLayout));	
-		 mainStage.show();
+		 tmpStage.setScene(new Scene(mainLayout));	
+		 tmpStage.showAndWait();
 	}
 	
 	private void sendPost(URI url) { //, List<NameValuePair> postParams) {
