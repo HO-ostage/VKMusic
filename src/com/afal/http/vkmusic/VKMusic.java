@@ -11,9 +11,12 @@ import java.net.MalformedURLException;
 import java.net.URI;
 import java.net.URISyntaxException;
 import java.net.URL;
+import java.nio.file.FileVisitResult;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.nio.file.SimpleFileVisitor;
+import java.nio.file.attribute.BasicFileAttributes;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.prefs.Preferences;
@@ -84,6 +87,7 @@ import org.xml.sax.helpers.DefaultHandler;
 
 import com.google.gson.Gson;
 import com.google.gson.JsonArray;
+import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import com.google.gson.JsonPrimitive;
@@ -105,9 +109,15 @@ public class VKMusic extends Application{
 		private String url;
 		private String path;
 		
-		Song(String n, String a) {
-			title = n; 
+		Song(String t, String a) {
+			title = t; 
 			artist = a;
+		}
+		
+		Song(String t, String a, String p) {
+			title = t; 
+			artist = a;
+			path = p;
 		}
 		
 		Song() {
@@ -190,6 +200,18 @@ public class VKMusic extends Application{
 		}
 	}
 	
+	class VKMusicFileVisitor extends SimpleFileVisitor<Path> {
+		public FileVisitResult visitFile(Path file, BasicFileAttributes attr) {
+			if(file.getFileName().toString().contains(".mp3")){
+				localSongArr.add(
+						new Song(file.getFileName().toString().split("-")[0], 
+								file.getFileName().toString().split("-")[1], 
+								file.toAbsolutePath().toString()));
+			}
+			return FileVisitResult.CONTINUE;
+		}
+	}
+	
 	final static Preferences userPrefs = Preferences.userNodeForPackage(VKMusic.class);
 	
 	public static void main(String[] args) {
@@ -218,6 +240,7 @@ public class VKMusic extends Application{
 	TextField musicPathField = null;
 	
 	ArrayList<Song> songArr = null;
+	ArrayList<Song> localSongArr = null;
 	
 	public void start(Stage stage) {
 		mainStage = stage;
@@ -225,15 +248,37 @@ public class VKMusic extends Application{
 		firstRun = userPrefs.getBoolean("firstRun", true);
 		if(firstRun) {
 			setUpGUI();
+			
+			accessToken = userPrefs.get("accessToken", "noAccessToken");
+			if(accessToken.equals("noAccessToken"))
+				authVK();
+			else
+				userID = userPrefs.get("userID", "noUserID");
+	
+			parseFromJson(getMusicJSON());
+			//downloadAllSongs();
 		}
-		
-	
-		authVK();
-		
-		parseAndDownloadXML();
-	
+		else {
+			parseFromJson(getMusicJSON());
+			getLocalMusic();
+			downloadMissingMusic();
+		}
 	}
-	
+
+	private void downloadMissingMusic() {
+		// TODO Auto-generated method stub
+		
+	}
+
+	private void getLocalMusic() {
+		try {
+			Files.walkFileTree(Paths.get(musicPath), new VKMusicFileVisitor());
+		} catch (IOException e) {
+			// TODO Auto-generated catch block
+			e.printStackTrace();
+		}
+	}
+
 	private void authVK() {
 		URI authURI = null;
 	
@@ -253,10 +298,6 @@ public class VKMusic extends Application{
 		}
 
 		openInBrowser(authURI);
-		
-		//CookieHandler.setDefault(new CookieManager());
-		//String response = getPageContent(authURI);
-		//sendPost(authURI);
 	}
 
 	private String fixWindowsFileName(String pathname) {	
@@ -268,48 +309,12 @@ public class VKMusic extends Application{
         // амперсанд в названиях передаётся как '& amp', приводим его к читаемому виду
         return StringEscapeUtils.unescapeXml(result); 
 	}
-	
+
 	private String getAccessToken(String fromUri) {
 		return fromUri
 				.substring(fromUri.indexOf("access_token"))
 				.split("&")[0]
 				.split("=")[1];
-	}
-
-	private String getPageContent(URI uri)  {
-		String response = null;
-
-		HttpGet httpGet = new HttpGet(uri);
-
-		CloseableHttpResponse httpResponse = null;
-		
-		try {
-			httpResponse = httpClient.execute(httpGet);
-		} catch (ClientProtocolException e) {
-			// TODO Auto-generated catch block
-			e.printStackTrace();
-		} catch (IOException e) {
-			// TODO Auto-generated catch block
-			e.printStackTrace();
-		}
-		
-
-		HttpEntity respEntity = httpResponse.getEntity();
-		if(respEntity != null) {
-			try {
-				response = EntityUtils.toString(respEntity, "UTF-8");
-			} catch (ParseException e) {
-				// TODO Auto-generated catch block
-				e.printStackTrace();
-			} catch (IOException e) {
-				// TODO Auto-generated catch block
-				e.printStackTrace();
-			}
-		}
-		else
-			System.out.println("NULL");
-		
-		return response;
 	}
 
 	private String getUserID(String fromUri) {
@@ -369,8 +374,12 @@ public class VKMusic extends Application{
 					System.out.println(eng.getLocation());
 					if(eng.getLocation().contains("access_token")) {
 						accessToken = getAccessToken(eng.getLocation());
-						System.out.println(accessToken);
+						userPrefs.put("accessToken", accessToken);
+						//System.out.println(accessToken);
+						
 						userID = getUserID(eng.getLocation());
+						userPrefs.put("userID", userID);
+						
 						tmpStage.close();
 					}
 				}
@@ -467,7 +476,24 @@ public class VKMusic extends Application{
 			//downloadSong(song);
 	}
 	
-	private void parseAndDownloadJson()  {
+	private void parseFromJson(JsonElement musicJson)  {
+		Gson gson = new Gson();
+		JsonArray jarr = musicJson.getAsJsonObject().get("items").getAsJsonArray();
+		Integer count = jarr.size();
+		
+		File musicDir = new File(musicPath);
+		if(!musicDir.exists())
+			musicDir.mkdirs();
+		
+		songArr = new ArrayList<Song>();
+		for(int i = 0; i < count; i++) {
+			jarr.get(i);
+			Song song = gson.fromJson(jarr.get(i), Song.class);
+			songArr.add(song);
+		}
+	}
+		
+	private JsonElement getMusicJSON() {
 		URI getMusicUri = null;
 		try {
 			getMusicUri = new URIBuilder()
@@ -479,14 +505,29 @@ public class VKMusic extends Application{
 						.setParameter("count", "6000")
 						.setParameter("offset", "0")
 						.setParameter("access_token", accessToken)
+						.setParameter("v", apiVersion)
 						.build();
 		} catch (URISyntaxException e) {
 			throw new RuntimeException("This should never happen, because URI is hardcoded", e);
 		}
 		
+		Gson gson = new Gson();
+		JsonParser jparser = new JsonParser();
+		String strResponse = null;
+		
+		strResponse = execRequest(getMusicUri);
+		if(jparser.parse(strResponse).getAsJsonObject().get("error") != null)
+			authVK();
+		
+		strResponse = execRequest(getMusicUri);
+		
+		return jparser.parse(strResponse).getAsJsonObject().get("response");
+	}
+	
+	private String execRequest(URI uri) {
 		CloseableHttpResponse response = null;
 		try {
-			response = httpClient.execute(new HttpGet(getMusicUri));
+			response = httpClient.execute(new HttpGet(uri));
 		} catch (ClientProtocolException e) {
 			// TODO Auto-generated catch block
 			e.printStackTrace();
@@ -494,10 +535,11 @@ public class VKMusic extends Application{
 			// TODO Auto-generated catch block
 			e.printStackTrace();
 		}
+	
 		
-		String strResponse = null;
+		String sResponse = null;
 		try {
-			strResponse = EntityUtils.toString(response.getEntity());
+			sResponse = EntityUtils.toString(response.getEntity());
 		} catch (ParseException e) {
 			// TODO Auto-generated catch block
 			e.printStackTrace();
@@ -505,24 +547,13 @@ public class VKMusic extends Application{
 			// TODO Auto-generated catch block
 			e.printStackTrace();
 		}
-
-		Gson gson = new Gson();
-		JsonParser jparser = new JsonParser();
-		JsonObject jobj = jparser.parse(strResponse).getAsJsonObject();
-		JsonArray jarr = jobj.get("response").getAsJsonArray();
 		
-		
-		Integer count = gson.fromJson(jarr.get(0), Integer.class);
-		
-		File musicDir = new File(musicPath);
-		if(!musicDir.exists())
-			musicDir.mkdirs();
-		
-		songArr = new ArrayList<Song>();
-		for(int i = 1; i < count; i++) {
-			Song song = gson.fromJson(jarr.get(i), Song.class);
-			songArr.add(song);
-			//downloadSong(song);
+		return sResponse;
+	}
+	
+	private void downloadAllSongs() {
+		for(Song song : songArr) {
+			downloadSong(song);
 		}
 	}
 	
@@ -613,53 +644,5 @@ public class VKMusic extends Application{
 		 tmpStage.setScene(new Scene(mainLayout));	
 		 tmpStage.showAndWait();
 	}
-	
-	private void sendPost(URI url) { //, List<NameValuePair> postParams) {
-		HttpPost post = new HttpPost(url);
-		
-		post.setHeader("Host", "oauth.vk.com");
-		post.setHeader("User-Agent", userAgent);
-		post.setHeader("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8");
-		post.setHeader("Accept-Language", "en-US,en;q=0.5");
-		post.setHeader("Cookie", cookieStore.getCookies().get(0).toString());//Browser.getCookie("JSESSIONID", "oauth.vk.com"));//url.toASCIIString()));
-		post.setHeader("Connection", "keep-alive");
-		post.setHeader("Referer", "https://oauth.vk.com/authorize");
-		post.setHeader("Content-Type", "application/x-www-form-urlencoded");
-		
-		CloseableHttpResponse response = null;
-		
-		try {
-			response = httpClient.execute(post);
-		} catch (ClientProtocolException e1) {
-			// TODO Auto-generated catch block
-			e1.printStackTrace();
-		} catch (IOException e1) {
-			// TODO Auto-generated catch block
-			e1.printStackTrace();
-		}
-	
-		BufferedReader rd = null;
-		try {
-			rd = new BufferedReader(new InputStreamReader(response.getEntity().getContent()));
-		} catch (UnsupportedOperationException e1) {
-			// TODO Auto-generated catch block
-			e1.printStackTrace();
-		} catch (IOException e1) {
-			// TODO Auto-generated catch block
-			e1.printStackTrace();
-		}
-		
 
-		StringBuffer result = new StringBuffer();
-		String line = "";
-		try {
-			while ((line = rd.readLine()) != null) {
-			result.append(line);
-			}
-		} catch (IOException e) {
-			// TODO Auto-generated catch block
-			e.printStackTrace();
-		}
-		System.out.println(result.toString());
-	}
 }
