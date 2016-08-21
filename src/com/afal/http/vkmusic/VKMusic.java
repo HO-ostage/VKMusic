@@ -1,6 +1,16 @@
 package com.afal.http.vkmusic;
+import java.awt.AWTException;
+import java.awt.Font;
+import java.awt.Image;
+import java.awt.MenuItem;
+import java.awt.SystemTray;
+import java.awt.Toolkit;
+import java.awt.TrayIcon;
+import java.awt.event.ActionListener;
 import java.io.BufferedReader;
 import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.InputStreamReader;
 import java.io.Serializable;
@@ -21,6 +31,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.prefs.Preferences;
 
+import javax.imageio.ImageIO;
 import javax.xml.bind.annotation.XmlRootElement;
 import javax.xml.parsers.ParserConfigurationException;
 import javax.xml.parsers.SAXParser;
@@ -38,8 +49,10 @@ import javafx.scene.control.Button;
 import javafx.scene.control.CheckBox;
 import javafx.scene.control.Label;
 import javafx.scene.control.TextField;
+import javafx.scene.layout.FlowPane;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.VBox;
+import javafx.scene.paint.Color;
 import javafx.scene.web.WebEngine;
 import javafx.scene.web.WebView;
 import javafx.stage.DirectoryChooser;
@@ -158,6 +171,58 @@ public class VKMusic extends Application{
 		void setPath(String sPath) {
 			path = sPath;
 		}
+
+		public void fixExtraSpaces() {
+			artist = artist.trim();
+			title  = title.trim();
+		}
+		
+		@Override
+		public int hashCode() {
+			final int prime = 31;
+			int result = 1;
+			result = prime * result + getOuterType().hashCode();
+			result = prime * result
+					+ ((artist == null) ? 0 : artist.hashCode());
+			result = prime * result + ((title == null) ? 0 : title.hashCode());
+			return result;
+		}
+
+		@Override
+		public boolean equals(Object obj) {
+			if (obj == null) {
+				return false;
+			}
+			if (!(obj instanceof Song)) {
+				return false;
+			}
+			if (this == obj) {
+				return true;
+			}
+			Song other = (Song) obj;
+			if (!getOuterType().equals(other.getOuterType())) {
+				return false;
+			}
+			if (artist == null) {
+				if (other.artist != null) {
+					return false;
+				}
+			} else if (!artist.equals(other.artist)) {
+				return false;
+			}
+			if (title == null) {
+				if (other.title != null) {
+					return false;
+				}
+			} else if (!title.equals(other.title)) {
+				return false;
+			}
+			return true;
+		}
+
+		private VKMusic getOuterType() {
+			return VKMusic.this;
+		}
 	}
 	
 	class VKMusicHandler extends DefaultHandler {
@@ -195,18 +260,21 @@ public class VKMusic extends Application{
 		
 		public void endElement(String uri, String localName, String qName) {
 			if(qName.equalsIgnoreCase("audio")) {
+				song.fixExtraSpaces();
 				songArr.add(song);
 			}
 		}
 	}
 	
 	class VKMusicFileVisitor extends SimpleFileVisitor<Path> {
+		@Override
 		public FileVisitResult visitFile(Path file, BasicFileAttributes attr) {
 			if(file.getFileName().toString().contains(".mp3")){
-				localSongArr.add(
-						new Song(file.getFileName().toString().split("-")[0], 
-								file.getFileName().toString().split("-")[1], 
-								file.toAbsolutePath().toString()));
+				String artist = file.getFileName().toString().split(" - ")[0];
+				String title  = file.getFileName().toString().split(" - ")[1].replace(".mp3", "");
+				String path = file.toAbsolutePath().toString();
+				
+				localSongArr.add(new Song(title, artist, path));
 			}
 			return FileVisitResult.CONTINUE;
 		}
@@ -218,6 +286,8 @@ public class VKMusic extends Application{
 		launch(args);
 	}
 	
+	Thread mainLoop = null;
+	
 	String userID = null;
 	String accessToken = null;
 	final String apiVersion = "5.53";
@@ -226,13 +296,14 @@ public class VKMusic extends Application{
 	final String redirectURI = "https://oauth.vk.com/blank.html";
 	final String responseType = "token";
 	final String userAgent = "Mozilla/5.0";
+	final String noValue = "nVal";
 	
 	boolean firstRun = true;
 	Stage mainStage = null;
+	Stage guiStage = null;
 	
 	CloseableHttpClient httpClient = HttpClients.createDefault();
-	CookieStore cookieStore = new BasicCookieStore();
-	
+
 	boolean makeDirForArtist = false;
 	CheckBox dirForArtistCB = null;
 	
@@ -245,32 +316,51 @@ public class VKMusic extends Application{
 	public void start(Stage stage) {
 		mainStage = stage;
 		
+		Platform.setImplicitExit(false);
+		addAppToTray();
+		
 		firstRun = userPrefs.getBoolean("firstRun", true);
+		accessToken = userPrefs.get("accessToken", noValue);
+		userID = userPrefs.get("userID", noValue);
+		musicPath = userPrefs.get("musicPath", noValue);
+		
 		if(firstRun) {
 			setUpGUI();
-			
-			accessToken = userPrefs.get("accessToken", "noAccessToken");
-			if(accessToken.equals("noAccessToken"))
-				authVK();
-			else
-				userID = userPrefs.get("userID", "noUserID");
-	
+			authVK();
 			parseFromJson(getMusicJSON());
-			//downloadAllSongs();
+			downloadAllSongs();
 		}
-		else {
-			parseFromJson(getMusicJSON());
-			getLocalMusic();
-			downloadMissingMusic();
-		}
+
+		getLocalMusic();
+		
+		mainLoop = new Thread() {
+			@Override
+			public void run() {
+				while(true) {
+					parseFromJson(getMusicJSON());
+					//downloadMissingMusic();
+					try {
+						Thread.sleep(10000);
+					} catch (InterruptedException e) {
+						// TODO Auto-generated catch block
+						e.printStackTrace();	
+					}
+				}
+			}
+		};
+		mainLoop.start();
 	}
 
 	private void downloadMissingMusic() {
-		// TODO Auto-generated method stub
-		
+		for(Song song : songArr) {
+			if(!localSongArr.contains(song))
+				downloadSong(song);
+				localSongArr.add(song);
+		}
 	}
 
 	private void getLocalMusic() {
+		localSongArr = new ArrayList<Song>();
 		try {
 			Files.walkFileTree(Paths.get(musicPath), new VKMusicFileVisitor());
 		} catch (IOException e) {
@@ -386,7 +476,6 @@ public class VKMusic extends Application{
 			}
 		});
 		
-		
 		tmpStage.setScene(new Scene(browser));
 		eng.load(uri.toASCIIString());
 		tmpStage.showAndWait();
@@ -398,8 +487,6 @@ public class VKMusic extends Application{
 			Shell shell = new Shell(display);
 			shell.setLayout(new FillLayout());
 			MessageBox msgBox = new MessageBox(shell);
-			msgBox.setMessage("HUJNIA");
-			msgBox.open();
 		}
 		URI getMusicUri = null;
 		
@@ -476,23 +563,20 @@ public class VKMusic extends Application{
 			//downloadSong(song);
 	}
 	
-	private void parseFromJson(JsonElement musicJson)  {
+	private void parseFromJson(JsonElement musicJson) {
 		Gson gson = new Gson();
 		JsonArray jarr = musicJson.getAsJsonObject().get("items").getAsJsonArray();
 		Integer count = jarr.size();
-		
-		File musicDir = new File(musicPath);
-		if(!musicDir.exists())
-			musicDir.mkdirs();
 		
 		songArr = new ArrayList<Song>();
 		for(int i = 0; i < count; i++) {
 			jarr.get(i);
 			Song song = gson.fromJson(jarr.get(i), Song.class);
+			song.fixExtraSpaces();
 			songArr.add(song);
 		}
 	}
-		
+	
 	private JsonElement getMusicJSON() {
 		URI getMusicUri = null;
 		try {
@@ -552,15 +636,21 @@ public class VKMusic extends Application{
 	}
 	
 	private void downloadAllSongs() {
+		File musicDir = new File(musicPath);
+		if(!musicDir.exists())
+			musicDir.mkdirs();
+		/*
 		for(Song song : songArr) {
 			downloadSong(song);
 		}
+		*/
+		downloadSong(songArr.get(0));
 	}
 	
 	private void downloadSong(Song song) {
 		String path = musicPath;
 		if(makeDirForArtist) {
-			path += "\\" + fixWindowsFileName(song.getArtist()) + "\\";
+			path += "\\" + fixWindowsFileName(song.getArtist());
 			try {
 				Files.createDirectory(Paths.get(path));
 			} catch (IOException e) {
@@ -568,7 +658,7 @@ public class VKMusic extends Application{
 				e.printStackTrace();
 			}
 		}
-		path += fixWindowsFileName(song.getTitle() + " - " + song.getArtist());
+		path += "\\" + fixWindowsFileName(song.getTitle() + " - " + song.getArtist());
 		
 		File dest = new File(path + ".mp3");
 		if(!dest.exists()) {
@@ -585,10 +675,19 @@ public class VKMusic extends Application{
 		}
 	}
 	
+	private void showGUI() {
+		if(guiStage != null){
+			guiStage.showAndWait();
+			//guiStage.toFront();
+		}
+		else
+			setUpGUI();
+	}
+	
 	private void setUpGUI() {
-		 Stage tmpStage = new Stage();
-		 tmpStage.setTitle("VKMusic");
-		 tmpStage.setOnCloseRequest(new EventHandler<WindowEvent>() {
+		 guiStage = new Stage();
+		 guiStage.setTitle("VKMusic");
+		 guiStage.setOnCloseRequest(new EventHandler<WindowEvent>() {
 
 			@Override
 			public void handle(WindowEvent arg0) {
@@ -623,11 +722,11 @@ public class VKMusic extends Application{
 		 Button okButton = new Button("Ok");
 		 okButton.setOnAction(new EventHandler<ActionEvent>() {
 			public void handle(ActionEvent e) {
-				musicPath = musicPathField.getText();
+				musicPath = musicPathField.getText() + "\\VKMusic";
 				userPrefs.put("musicPath", musicPath);
-				makeDirForArtist = dirForArtistCB.isArmed();
+				makeDirForArtist = dirForArtistCB.isSelected();
 				userPrefs.putBoolean("makeDirForArtist", makeDirForArtist);
-				tmpStage.hide();
+				guiStage.hide();
 			}
 		 });
 		 Button cancelButton = new Button("Cancel");
@@ -641,8 +740,78 @@ public class VKMusic extends Application{
 		 
 		 mainLayout.getChildren().addAll(musicPathLayout, dirForArtistLayout, buttonLayout);
 		 
-		 tmpStage.setScene(new Scene(mainLayout));	
-		 tmpStage.showAndWait();
+		 guiStage.setScene(new Scene(mainLayout));	
+		 guiStage.showAndWait();
 	}
+
+	private void addAppToTray() {
+	    // ensure awt toolkit is initialized.
+	    Toolkit.getDefaultToolkit();
+	
+	    // app requires system tray support, just exit if there is no support.
+	    if (!SystemTray.isSupported()) {
+	        System.out.println("No system tray support, application exiting.");
+	        Platform.exit();
+	    }
+	
+	    // set up a system tray icon.
+	    SystemTray tray = SystemTray.getSystemTray();
+	    URL imageLoc = null;
+		try {
+			imageLoc = new URL("https://cdn3.iconfinder.com/data/icons/social-media-chat-1/512/VK-128.png");
+		} catch (MalformedURLException e1) {
+			// TODO Auto-generated catch block
+			e1.printStackTrace();
+		}
+	
+	    Image image = null;
+		try {
+			image = ImageIO.read(imageLoc);
+		} catch (IOException e1) {
+			// TODO Auto-generated catch block
+			e1.printStackTrace();
+		}
+	    TrayIcon trayIcon = new java.awt.TrayIcon(image);
+	
+	    // if the user double-clicks on the tray icon, show the main app stage.
+	    trayIcon.addActionListener(event -> Platform.runLater(this::showGUI));
+	
+	    MenuItem openItem = new java.awt.MenuItem("Open");
+	    openItem.addActionListener(event -> Platform.runLater(this::showGUI));
+	
+	    // the convention for tray icons seems to be to set the default icon for opening
+	    // the application stage in a bold font.
+	    Font defaultFont = Font.decode(null);
+	    Font boldFont = defaultFont.deriveFont(Font.BOLD);
+	    openItem.setFont(boldFont);
+	    // to really exit the application, the user must go to the system tray icon
+	    // and select the exit option, this will shutdown JavaFX and remove the
+	    // tray icon (removing the tray icon will also shut down AWT).
+	    MenuItem exitItem = new MenuItem("Exit");
+	    exitItem.addActionListener(new ActionListener() {
+	
+			@Override
+			public void actionPerformed(java.awt.event.ActionEvent e) {
+				Platform.exit();
+	            tray.remove(trayIcon);
+	            System.exit(0);
+			}
+	    });
+	
+	    // setup the popup menu for the application.
+	    final java.awt.PopupMenu popup = new java.awt.PopupMenu();
+	    popup.add(openItem);
+	    popup.addSeparator();
+	    popup.add(exitItem);
+	    trayIcon.setPopupMenu(popup);
+	
+	    // add the application tray icon to the system tray.
+	    try {
+			tray.add(trayIcon);
+		} catch (AWTException e1) {
+			// TODO Auto-generated catch block
+			e1.printStackTrace();
+		}
+    }
 
 }
